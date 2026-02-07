@@ -131,10 +131,9 @@ bool osd_args_parse(int argc, char **argv, OSDArgs *out, FILE *err_stream) {
         return false;
     }
 
-    if (out->css_replace && !out->css_path_set) {
-        (void)fprintf(err_stream, "--css-replace requires --css-file\n");
-        return false;
-    }
-
+    /*
+     * Cross-source validation (CLI + config) is deferred until startup has
+     * completed config loading, so option parsing can remain order-independent.
+     */
     return true;
 }

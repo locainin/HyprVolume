@@ -5,6 +5,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* Validates option combinations after defaults, config, and CLI overrides merge. */
+static bool osd_args_validate_combined(const OSDArgs *args, FILE *err_stream) {
+    if (args == NULL || err_stream == NULL) {
+        return false;
+    }
+
+    if (args->css_replace && !args->css_path_set) {
+        (void)fprintf(err_stream, "--css-replace requires --css-file\n");
+        return false;
+    }
+
+    return true;
+}
+
 /* Application entrypoint: defaults -> parse -> optional config -> window runtime. */
 int main(int argc, char **argv) {
     OSDArgs args;
@@ -35,6 +49,11 @@ int main(int argc, char **argv) {
             osd_args_print_help(stdout, (argc > 0) ? argv[0] : "hyprvolume");
             return EXIT_SUCCESS;
         }
+    }
+
+    if (!osd_args_validate_combined(&args, stderr)) {
+        osd_args_print_help(stderr, (argc > 0) ? argv[0] : "hyprvolume");
+        return EXIT_FAILURE;
     }
 
     return osd_window_run(&args);

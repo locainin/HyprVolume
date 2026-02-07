@@ -12,6 +12,8 @@
 
 static gboolean window_on_watch_poll(gpointer user_data);
 static void window_set_error(WindowState *state, const char *message);
+static void window_log_watch_query_failure(WindowState *state, const char *message);
+static void window_log_watch_query_recovery(WindowState *state);
 
 /*
  * Derives a conservative idle poll interval to keep watch-mode CPU lower when
@@ -80,6 +82,33 @@ static void window_set_error(WindowState *state, const char *message) {
     if (g_application_get_default() != NULL) {
         g_application_quit(g_application_get_default());
     }
+}
+
+/*
+ * Logs repeated watch-mode query failures once until a successful query resets
+ * the state. This preserves diagnostics without flooding stderr every poll.
+ */
+static void window_log_watch_query_failure(WindowState *state, const char *message) {
+    if (state == NULL || message == NULL) {
+        return;
+    }
+
+    if (state->watch_query_failure_logged) {
+        return;
+    }
+
+    g_printerr("%s\n", message);
+    state->watch_query_failure_logged = true;
+}
+
+/* Emits a recovery marker once after transient system query failures clear. */
+static void window_log_watch_query_recovery(WindowState *state) {
+    if (state == NULL || !state->watch_query_failure_logged) {
+        return;
+    }
+
+    g_printerr("System volume query recovered; watch mode resumed\n");
+    state->watch_query_failure_logged = false;
 }
 
 /* Applies muted-state CSS classes to all widgets affected by visual state. */
@@ -205,9 +234,16 @@ static gboolean window_on_watch_poll(gpointer user_data) {
     /* One-shot timer model requires explicit re-arm on each callback. */
     state->watch_source_id = 0U;
     if (!osd_system_volume_query(&sampled, stderr)) {
-        window_set_error(state, "Failed to query system volume while watching");
+        window_log_watch_query_failure(
+            state,
+            "Failed to query system volume while watching; keeping watcher alive and retrying"
+        );
+        if (!window_schedule_watch_poll(state)) {
+            return G_SOURCE_REMOVE;
+        }
         return G_SOURCE_REMOVE;
     }
+    window_log_watch_query_recovery(state);
 
     if (!state->has_previous_watch_sample) {
         /* First sample initializes baseline without forcing another show. */
@@ -287,14 +323,27 @@ static void window_on_shutdown(GApplication *app, gpointer user_data) {
 
 /* Starts watch mode and keeps the process alive for future volume changes. */
 static bool window_activate_watch_mode(WindowState *state, GtkApplication *app) {
-    /* Watch mode keeps the process alive and only shows on volume transitions. */
-    if (!window_refresh_from_system(state)) {
-        return false;
-    }
+    OSDVolumeState sampled;
 
-    state->has_previous_watch_sample = true;
-    if (!window_show_popup(state)) {
-        return false;
+    /*
+     * Watch mode should survive transient PipeWire or wpctl startup races.
+     * Initial query failures keep the process alive and retry in the poll loop.
+     */
+    if (osd_system_volume_query(&sampled, stderr)) {
+        state->current_volume = sampled;
+        state->has_previous_watch_sample = true;
+        window_log_watch_query_recovery(state);
+        window_update_widgets(state);
+
+        if (!window_show_popup(state)) {
+            return false;
+        }
+    } else {
+        window_log_watch_query_failure(
+            state,
+            "Initial system volume query failed; watch mode will retry in background"
+        );
+        state->has_previous_watch_sample = false;
     }
 
     g_application_hold(G_APPLICATION(app));
@@ -341,12 +390,16 @@ static void window_configure_base_window(WindowState *state, GtkApplication *app
 static void window_activate_mode(WindowState *state, GtkApplication *app) {
     if (state->args.watch_mode) {
         /* Watch mode is long-lived and timer-driven. */
-        (void)window_activate_watch_mode(state, app);
+        if (!window_activate_watch_mode(state, app) && state->exit_code == 0) {
+            window_set_error(state, "Failed to activate watch mode");
+        }
         return;
     }
 
     /* Single popup exits automatically after timeout elapses. */
-    (void)window_activate_single_popup(state);
+    if (!window_activate_single_popup(state) && state->exit_code == 0) {
+        window_set_error(state, "Failed to activate single-popup mode");
+    }
 }
 
 /* GTK activate callback for window setup, CSS install, and mode startup. */

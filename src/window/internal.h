@@ -22,6 +22,7 @@ typedef struct {
     bool app_held;
     bool popup_visible;
     bool has_previous_watch_sample;
+    bool watch_query_failure_logged;
     int exit_code;
 } WindowState;
 

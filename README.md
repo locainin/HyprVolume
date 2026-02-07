@@ -101,6 +101,7 @@ Watch-mode performance behavior:
 
 - while the popup is visible, polling uses `watch_poll_ms`
 - while hidden, polling automatically backs off to a slower idle interval to reduce CPU load
+- transient `wpctl` query failures are retried in-place so the watcher stays alive instead of exiting
 
 One-shot mode:
 
@@ -134,6 +135,7 @@ Custom CSS can be loaded from file:
 - `--css-append` keeps built-in theme CSS and applies custom CSS afterwards
 - `--css-replace` skips built-in theme CSS and uses only custom CSS
 - `--vertical` / `--horizontal` toggles layout direction
+- `--css-replace` validation is resolved after config + CLI merge, so config-provided `css_file` works correctly with CLI `--css-replace`
 
 Default install ships and uses:
 

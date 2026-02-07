@@ -3,7 +3,6 @@
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
-#include <fcntl.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
@@ -159,11 +158,18 @@ static bool wait_for_child_process(pid_t child_pid, int *status, FILE *err_strea
     return true;
 }
 
-/* Parses strict wpctl output: "Volume: <float> [MUTED]" with finite bounds checks. */
+/*
+ * Parses wpctl output while tolerating known output variants:
+ * - "Volume: <fraction> [MUTED]"
+ * - "Volume for <target>: <percent>% [MUTED]"
+ */
 static bool parse_wpctl_output_line(const char *line, double *out_fraction, bool *out_muted, FILE *err_stream) {
     const char *cursor = NULL;
+    const char *prefix_end = NULL;
     char *end_ptr = NULL;
+    double parsed_value = 0.0;
     double parsed_fraction = 0.0;
+    bool parsed_as_percent = false;
     bool muted = false;
 
     if (line == NULL || out_fraction == NULL || out_muted == NULL || err_stream == NULL) {
@@ -171,27 +177,52 @@ static bool parse_wpctl_output_line(const char *line, double *out_fraction, bool
     }
 
     cursor = skip_whitespace(line);
-    if (cursor == NULL || strncmp(cursor, "Volume:", 7) != 0) {
-        /* Unexpected format is rejected to avoid parsing incorrect output. */
+    if (cursor == NULL) {
+        return false;
+    }
+
+    /*
+     * Prefix matching is explicit to keep parser behavior deterministic across
+     * WirePlumber output variants.
+     */
+    if (strncmp(cursor, "Volume:", 7) == 0) {
+        prefix_end = cursor + 7;
+    } else if (strncmp(cursor, "Volume for ", 11) == 0) {
+        prefix_end = strchr(cursor, ':');
+        if (prefix_end != NULL) {
+            prefix_end++;
+        }
+    }
+
+    if (prefix_end == NULL) {
         (void)fprintf(err_stream, "Unexpected wpctl output: %s", line);
         return false;
     }
 
-    cursor = skip_whitespace(cursor + 7);
+    cursor = skip_whitespace(prefix_end);
     if (cursor == NULL || *cursor == '\0') {
         (void)fprintf(err_stream, "Unexpected wpctl output: %s", line);
         return false;
     }
 
     errno = 0;
-    /* strtod handles fractional formats used by wpctl output. */
-    parsed_fraction = strtod(cursor, &end_ptr);
-    if (end_ptr == cursor || errno != 0 || !isfinite(parsed_fraction) || parsed_fraction < 0.0 || parsed_fraction > 2.0) {
+    /*
+     * strtod accepts both integer and fractional values.
+     * Unit is resolved by optional '%' suffix handling below.
+     */
+    parsed_value = strtod(cursor, &end_ptr);
+    if (end_ptr == cursor || errno != 0 || !isfinite(parsed_value) || parsed_value < 0.0) {
         (void)fprintf(err_stream, "Invalid wpctl volume value: %s", line);
         return false;
     }
 
     cursor = skip_whitespace(end_ptr);
+    if (cursor != NULL && *cursor == '%') {
+        /* Percent output is normalized into the same fraction scale as 0.65. */
+        parsed_as_percent = true;
+        cursor = skip_whitespace(cursor + 1);
+    }
+
     if (cursor != NULL && strncmp(cursor, "[MUTED]", 7) == 0) {
         /* Optional [MUTED] marker is consumed when present. */
         muted = true;
@@ -203,6 +234,7 @@ static bool parse_wpctl_output_line(const char *line, double *out_fraction, bool
         return false;
     }
 
+    parsed_fraction = parsed_as_percent ? (parsed_value / 100.0) : parsed_value;
     *out_fraction = parsed_fraction;
     *out_muted = muted;
     return true;
@@ -242,8 +274,11 @@ static bool read_wpctl_volume_line(char *line, size_t line_size, FILE *err_strea
 
     if (posix_spawn_file_actions_addclose(&spawn_actions, pipe_fds[0]) != 0 ||
         posix_spawn_file_actions_adddup2(&spawn_actions, pipe_fds[1], STDOUT_FILENO) != 0 ||
-        posix_spawn_file_actions_addclose(&spawn_actions, pipe_fds[1]) != 0 ||
-        posix_spawn_file_actions_addopen(&spawn_actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) != 0) {
+        posix_spawn_file_actions_addclose(&spawn_actions, pipe_fds[1]) != 0) {
+        /*
+         * Child stderr intentionally inherits the parent stream so operational
+         * failures from wpctl stay visible during long-running watch mode.
+         */
         (void)fprintf(err_stream, "Failed to prepare wpctl spawn redirections\n");
         (void)posix_spawn_file_actions_destroy(&spawn_actions);
         (void)close(pipe_fds[0]);
@@ -300,8 +335,18 @@ read_complete:
     line[line_used] = '\0';
     (void)close(pipe_fds[0]);
     if (line_used == 0U) {
-        (void)wait_for_child_process(child_pid, &status, err_stream);
-        (void)fprintf(err_stream, "Failed to read volume from wpctl output\n");
+        if (!wait_for_child_process(child_pid, &status, err_stream)) {
+            return false;
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+            (void)fprintf(err_stream, "wpctl get-volume failed with exit code %d\n", WEXITSTATUS(status));
+            return false;
+        }
+        if (!WIFEXITED(status)) {
+            (void)fprintf(err_stream, "wpctl get-volume terminated unexpectedly\n");
+            return false;
+        }
+        (void)fprintf(err_stream, "wpctl get-volume produced no stdout output\n");
         return false;
     }
 
@@ -310,8 +355,13 @@ read_complete:
         return false;
     }
 
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        (void)fprintf(err_stream, "wpctl get-volume failed\n");
+    if (!WIFEXITED(status)) {
+        (void)fprintf(err_stream, "wpctl get-volume terminated unexpectedly\n");
+        return false;
+    }
+
+    if (WEXITSTATUS(status) != 0) {
+        (void)fprintf(err_stream, "wpctl get-volume failed with exit code %d\n", WEXITSTATUS(status));
         return false;
     }
 
