@@ -1,0 +1,7 @@
+hyprvolume
+build/
+build-san/
+compile_commands.json
+.cache/
+tests/
+.clangd

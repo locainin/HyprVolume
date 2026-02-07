@@ -1,0 +1,326 @@
+#include "system/volume.h"
+
+#include <ctype.h>
+#include <errno.h>
+#include <math.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#define OSD_WPCTL_ENV_PATH "HYPRVOLUME_WPCTL_PATH"
+
+/* Checks if a candidate executable path points to a regular executable file. */
+static bool is_regular_executable_file(const char *path) {
+    struct stat file_stat;
+
+    /* Empty paths are rejected early to avoid ambiguous resolution. */
+    if (path == NULL || path[0] == '\0') {
+        return false;
+    }
+
+    /* stat() validates object existence and type in one syscall. */
+    if (stat(path, &file_stat) != 0) {
+        return false;
+    }
+
+    /* Restrict execution targets to regular files only. */
+    if (!S_ISREG(file_stat.st_mode)) {
+        return false;
+    }
+
+    /* Final check verifies execute bit for current process credentials. */
+    return access(path, X_OK) == 0;
+}
+
+/*
+ * Resolves wpctl without PATH search to avoid executable hijacking.
+ * Optional override is supported via HYPRVOLUME_WPCTL_PATH when absolute.
+ */
+static bool resolve_wpctl_path(char *out_path, size_t out_path_size, FILE *err_stream) {
+    static const char *const default_paths[] = {
+        "/usr/bin/wpctl",
+        "/usr/local/bin/wpctl",
+        "/bin/wpctl"
+    };
+    const char *override_path = NULL;
+    size_t index = 0U;
+
+    if (out_path == NULL || out_path_size == 0U || err_stream == NULL) {
+        return false;
+    }
+
+    override_path = getenv(OSD_WPCTL_ENV_PATH);
+    if (override_path != NULL && override_path[0] != '\0') {
+        /* Override path must be absolute to prevent PATH-based hijacks. */
+        if (override_path[0] != '/') {
+            (void)fprintf(err_stream, "%s must be an absolute path when set\n", OSD_WPCTL_ENV_PATH);
+            return false;
+        }
+        if (!is_regular_executable_file(override_path)) {
+            (void)fprintf(err_stream, "%s does not point to an executable file: %s\n", OSD_WPCTL_ENV_PATH, override_path);
+            return false;
+        }
+        if (strlen(override_path) >= out_path_size) {
+            (void)fprintf(err_stream, "Resolved wpctl path is too long\n");
+            return false;
+        }
+        /* Copy is safe because output buffer size was checked. */
+        (void)strcpy(out_path, override_path);
+        return true;
+    }
+
+    for (index = 0U; index < (sizeof(default_paths) / sizeof(default_paths[0])); index++) {
+        /* Iterate deterministic trusted paths in fixed priority order. */
+        if (!is_regular_executable_file(default_paths[index])) {
+            continue;
+        }
+        if (strlen(default_paths[index]) >= out_path_size) {
+            continue;
+        }
+        /* Copy is safe because destination bound was validated. */
+        (void)strcpy(out_path, default_paths[index]);
+        return true;
+    }
+
+    (void)fprintf(err_stream, "Failed to locate wpctl in standard paths; set %s to an absolute executable path\n", OSD_WPCTL_ENV_PATH);
+    return false;
+}
+
+/* Clamp utility keeps parsed output inside the visible OSD range. */
+static int clamp_int(int value, int min_value, int max_value) {
+    if (value < min_value) {
+        /* Clamp avoids sending invalid ranges to progress UI. */
+        return min_value;
+    }
+
+    if (value > max_value) {
+        /* Clamp avoids sending invalid ranges to progress UI. */
+        return max_value;
+    }
+
+    return value;
+}
+
+static const char *skip_whitespace(const char *text) {
+    while (text != NULL && *text != '\0' && isspace((unsigned char)*text) != 0) {
+        /* Advancing one byte at a time keeps parser branchless/simple. */
+        text++;
+    }
+    return text;
+}
+
+/* Waits for a child process while tolerating EINTR interruptions. */
+static bool wait_for_child_process(pid_t child_pid, int *status, FILE *err_stream) {
+    pid_t wait_result = (pid_t)0;
+
+    if (status == NULL || err_stream == NULL) {
+        return false;
+    }
+
+    do {
+        /* EINTR retry prevents transient signal interruptions from failing. */
+        wait_result = waitpid(child_pid, status, 0);
+    } while (wait_result < 0 && errno == EINTR);
+
+    if (wait_result < 0) {
+        (void)fprintf(err_stream, "Failed to wait for wpctl process\n");
+        return false;
+    }
+
+    return true;
+}
+
+/* Parses strict wpctl output: "Volume: <float> [MUTED]" with finite bounds checks. */
+static bool parse_wpctl_output_line(const char *line, double *out_fraction, bool *out_muted, FILE *err_stream) {
+    const char *cursor = NULL;
+    char *end_ptr = NULL;
+    double parsed_fraction = 0.0;
+    bool muted = false;
+
+    if (line == NULL || out_fraction == NULL || out_muted == NULL || err_stream == NULL) {
+        return false;
+    }
+
+    cursor = skip_whitespace(line);
+    if (cursor == NULL || strncmp(cursor, "Volume:", 7) != 0) {
+        /* Unexpected format is rejected to avoid parsing incorrect output. */
+        (void)fprintf(err_stream, "Unexpected wpctl output: %s", line);
+        return false;
+    }
+
+    cursor = skip_whitespace(cursor + 7);
+    if (cursor == NULL || *cursor == '\0') {
+        (void)fprintf(err_stream, "Unexpected wpctl output: %s", line);
+        return false;
+    }
+
+    errno = 0;
+    /* strtod handles fractional formats used by wpctl output. */
+    parsed_fraction = strtod(cursor, &end_ptr);
+    if (end_ptr == cursor || errno != 0 || !isfinite(parsed_fraction) || parsed_fraction < 0.0 || parsed_fraction > 2.0) {
+        (void)fprintf(err_stream, "Invalid wpctl volume value: %s", line);
+        return false;
+    }
+
+    cursor = skip_whitespace(end_ptr);
+    if (cursor != NULL && strncmp(cursor, "[MUTED]", 7) == 0) {
+        /* Optional [MUTED] marker is consumed when present. */
+        muted = true;
+        cursor = skip_whitespace(cursor + 7);
+    }
+
+    if (cursor != NULL && *cursor != '\0') {
+        (void)fprintf(err_stream, "Unexpected wpctl output tail: %s", line);
+        return false;
+    }
+
+    *out_fraction = parsed_fraction;
+    *out_muted = muted;
+    return true;
+}
+
+/* Executes wpctl directly without a shell and captures a single stdout line. */
+static bool read_wpctl_volume_line(char *line, size_t line_size, FILE *err_stream) {
+    int pipe_fds[2] = {-1, -1};
+    pid_t child_pid = -1;
+    char wpctl_path[256];
+    size_t line_used = 0U;
+    int status = 0;
+
+    if (line == NULL || line_size == 0U || err_stream == NULL) {
+        return false;
+    }
+
+    if (!resolve_wpctl_path(wpctl_path, sizeof(wpctl_path), err_stream)) {
+        /* Path resolution errors are already emitted by helper. */
+        return false;
+    }
+
+    if (pipe(pipe_fds) != 0) {
+        (void)fprintf(err_stream, "Failed to create pipe for wpctl invocation\n");
+        return false;
+    }
+
+    child_pid = fork();
+    if (child_pid < 0) {
+        (void)fprintf(err_stream, "Failed to fork for wpctl invocation\n");
+        (void)close(pipe_fds[0]);
+        (void)close(pipe_fds[1]);
+        return false;
+    }
+
+    if (child_pid == 0) {
+        int dev_null_fd = open("/dev/null", O_WRONLY);
+        int dup_ok = 0;
+
+        /* Child process writes only stdout into pipe for controlled parsing. */
+        (void)close(pipe_fds[0]);
+        dup_ok = dup2(pipe_fds[1], STDOUT_FILENO);
+        (void)close(pipe_fds[1]);
+        if (dup_ok < 0) {
+            _exit(126);
+        }
+        if (dev_null_fd >= 0) {
+            /* Suppress wpctl stderr noise; caller relies on exit status. */
+            dup_ok = dup2(dev_null_fd, STDERR_FILENO);
+            (void)close(dev_null_fd);
+            if (dup_ok < 0) {
+                _exit(126);
+            }
+        }
+
+        /* No shell invocation; argv is fixed to the query subcommand. */
+        execl(wpctl_path, "wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@", (char *)NULL);
+        _exit(127);
+    }
+
+    (void)close(pipe_fds[1]);
+    line[0] = '\0';
+    while (line_used < (line_size - 1U)) {
+        ssize_t bytes_read = read(pipe_fds[0], line + line_used, line_size - 1U - line_used);
+        size_t offset = 0U;
+
+        if (bytes_read < 0) {
+            if (errno == EINTR) {
+                /* Retry interrupted reads without dropping stream state. */
+                continue;
+            }
+            (void)close(pipe_fds[0]);
+            (void)wait_for_child_process(child_pid, &status, err_stream);
+            (void)fprintf(err_stream, "Failed to read volume from wpctl output\n");
+            return false;
+        }
+
+        if (bytes_read == 0) {
+            /* EOF: child closed stdout. */
+            break;
+        }
+
+        while (offset < (size_t)bytes_read) {
+            if (line[line_used + offset] == '\n') {
+                /* First line is sufficient for wpctl get-volume output. */
+                line_used += offset + 1U;
+                goto read_complete;
+            }
+            offset++;
+        }
+
+        line_used += (size_t)bytes_read;
+    }
+
+read_complete:
+    /* Ensure parser always receives a terminated C string. */
+    line[line_used] = '\0';
+    (void)close(pipe_fds[0]);
+    if (line_used == 0U) {
+        (void)wait_for_child_process(child_pid, &status, err_stream);
+        (void)fprintf(err_stream, "Failed to read volume from wpctl output\n");
+        return false;
+    }
+
+    if (!wait_for_child_process(child_pid, &status, err_stream)) {
+        /* wait helper already emitted the failure message. */
+        return false;
+    }
+
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+            (void)fprintf(err_stream, "Failed to execute wpctl at %s\n", wpctl_path);
+        } else {
+            (void)fprintf(err_stream, "wpctl get-volume failed\n");
+        }
+        return false;
+    }
+
+    return true;
+}
+
+/* Queries PipeWire volume from wpctl and maps it into OSD-visible state. */
+bool osd_system_volume_query(OSDVolumeState *out_state, FILE *err_stream) {
+    char line[256];
+    double fraction = 0.0;
+    bool muted = false;
+
+    if (out_state == NULL || err_stream == NULL) {
+        return false;
+    }
+
+    if (!read_wpctl_volume_line(line, sizeof(line), err_stream)) {
+        /* Error details are emitted by read helper. */
+        return false;
+    }
+
+    if (!parse_wpctl_output_line(line, &fraction, &muted, err_stream)) {
+        /* Parser helper reports malformed output details. */
+        return false;
+    }
+
+    /* wpctl fractional output maps directly to 0..200 UI percentage scale. */
+    out_state->volume_percent = clamp_int((int)lround(fraction * 100.0), 0, 200);
+    out_state->muted = muted;
+    return true;
+}
