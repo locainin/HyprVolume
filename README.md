@@ -7,14 +7,6 @@ GTK4 + `gtk4-layer-shell` volume OSD for Hyprland.
 ![HyprVolume Example 1](assets/assetOne.png)
 ![HyprVolume Example 2](assets/assetTwo.png)
 
-Source layout keeps headers beside module code under `src/`:
-
-- `src/app` entrypoint
-- `src/args` CLI parsing and defaults
-- `src/config` JSON config loading
-- `src/style` CSS generation and icon mapping
-- `src/system` `wpctl` volume query
-- `src/window` GTK window, widgets, and layer-shell placement
 
 ## Requirements
 
