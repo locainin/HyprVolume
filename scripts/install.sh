@@ -15,6 +15,7 @@ start_now=1
 overwrite_config=0
 overwrite_style=0
 enable_slide_value="true"
+reload_applied=0
 
 # Rejects control characters that can break generated config lines.
 validate_cli_path() {
@@ -260,12 +261,32 @@ mv "$tmp_file" "$hypr_conf"
 rm -f "$legacy_snippet"
 
 if [[ "$start_now" -eq 1 && -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" && -n "${WAYLAND_DISPLAY:-}" ]]; then
+  # Force config reload so newly written source/layerrule entries apply before start.
+  if command -v hyprctl >/dev/null 2>&1; then
+    if hyprctl reload >/dev/null 2>&1; then
+      reload_applied=1
+      # Small guard delay avoids racing first popup against compositor rule updates.
+      sleep 0.2
+      echo "Applied Hyprland config reload in current session."
+    else
+      echo "Failed to run hyprctl reload; startup hook will apply on next reload/restart." >&2
+    fi
+  else
+    echo "hyprctl was not found; startup hook will apply on next Hyprland restart." >&2
+  fi
+fi
+
+if [[ "$start_now" -eq 1 && -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" && -n "${WAYLAND_DISPLAY:-}" ]]; then
   pkill -x hyprvolume >/dev/null 2>&1 || true
   pkill -x hypr-volume-osd >/dev/null 2>&1 || true
   nohup "$bin_dir/hyprvolume" --watch --config "$config_file" >/dev/null 2>&1 &
   sleep 0.2
   if pgrep -x hyprvolume >/dev/null 2>&1; then
-    echo "Started watcher process in current session."
+    if [[ "$reload_applied" -eq 1 ]]; then
+      echo "Started watcher process in current session (after config reload)."
+    else
+      echo "Started watcher process in current session."
+    fi
   else
     echo "Watcher failed to stay running; start manually to inspect errors." >&2
   fi

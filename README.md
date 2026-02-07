@@ -30,8 +30,6 @@ Build:
 make
 ```
 
-The default build compiles directly from `src/*.c` into `hyprvolume` and does not keep project-local `.o` object caches.
-
 Warnings as errors:
 
 ```sh
@@ -127,7 +125,6 @@ Custom CSS can be loaded from file:
 - `--css-append` keeps built-in theme CSS and applies custom CSS afterwards
 - `--css-replace` skips built-in theme CSS and uses only custom CSS
 - `--vertical` / `--horizontal` toggles layout direction
-- `--css-replace` validation is resolved after config + CLI merge, so config-provided `css_file` works correctly with CLI `--css-replace`
 
 Default install ships and uses:
 
