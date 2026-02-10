@@ -4,6 +4,10 @@
 void osd_args_print_help(FILE *out_stream, const char *program_name) {
     const char *name = (program_name == NULL || *program_name == '\0') ? "hyprvolume" : program_name;
 
+    if (out_stream == NULL) {
+        return;
+    }
+
     (void)fprintf(
         out_stream,
         "Usage: %s [options]\n"
