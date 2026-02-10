@@ -1,6 +1,5 @@
 #include "config/config.h"
-#include "config/json_config_fields.h"
-
+#include "config/json/json_config_fields.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>

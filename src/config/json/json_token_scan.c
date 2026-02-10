@@ -1,4 +1,4 @@
-#include "config/json_token_scan_internal.h"
+#include "config/json/json_token_scan_internal.h"
 
 #include <ctype.h>
 #include <string.h>

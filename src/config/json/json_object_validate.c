@@ -1,5 +1,5 @@
-#include "config/json_config_fields.h"
-#include "config/json_token_scan_internal.h"
+#include "config/json/json_config_fields.h"
+#include "config/json/json_token_scan_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
