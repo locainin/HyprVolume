@@ -16,6 +16,18 @@ overwrite_config=0
 overwrite_style=0
 enable_slide_value="true"
 reload_applied=0
+tmp_config=""
+tmp_file=""
+
+cleanup_tmp_artifacts() {
+  if [[ -n "$tmp_config" && -f "$tmp_config" ]]; then
+    rm -f "$tmp_config"
+  fi
+  if [[ -n "$tmp_file" && -f "$tmp_file" ]]; then
+    rm -f "$tmp_file"
+  fi
+}
+trap cleanup_tmp_artifacts EXIT
 
 # Rejects control characters that can break generated config lines.
 validate_cli_path() {
@@ -189,6 +201,7 @@ if [[ "$config_from_default" -eq 1 ]]; then
     { print }
   ' "$config_file" > "$tmp_config"
   mv "$tmp_config" "$config_file"
+  tmp_config=""
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -250,6 +263,7 @@ awk \
   inside == 0 { print }
 ' "$hypr_conf" > "$tmp_file"
 mv "$tmp_file" "$hypr_conf"
+tmp_file=""
 
 {
   echo

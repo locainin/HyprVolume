@@ -25,6 +25,9 @@ static void osd_style_on_parsing_error(
     gchar *section_text = NULL;
 
     (void)provider;
+    if (context == NULL || context->err_stream == NULL || context->path == NULL || error == NULL) {
+        return;
+    }
     context->has_parsing_error = true;
 
     if (section != NULL) {
@@ -194,6 +197,11 @@ bool osd_style_build_custom_provider(const char *path, GtkCssProvider **out_prov
     if (path == NULL || out_provider == NULL || err_stream == NULL) {
         return false;
     }
+    if (*out_provider != NULL) {
+        (void)fprintf(err_stream, "Custom CSS output slot must be NULL before loading\n");
+        return false;
+    }
+    *out_provider = NULL;
 
     if (stat(path, &file_stat) != 0) {
         (void)fprintf(err_stream, "Failed to stat custom CSS file %s: %s\n", path, strerror(errno));
@@ -248,7 +256,9 @@ bool osd_style_build_custom_provider(const char *path, GtkCssProvider **out_prov
     context.has_parsing_error = false;
     handler_id = g_signal_connect(provider, "parsing-error", G_CALLBACK(osd_style_on_parsing_error), &context);
     gtk_css_provider_load_from_string(provider, css_text);
-    g_signal_handler_disconnect(provider, handler_id);
+    if (handler_id != 0UL) {
+        g_signal_handler_disconnect(provider, handler_id);
+    }
     free(css_text);
 
     if (context.has_parsing_error) {

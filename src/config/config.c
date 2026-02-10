@@ -376,6 +376,7 @@ static bool osd_config_apply_visual_values(const char *json_text, OSDArgs *args,
 /* Entry point for JSON config loading and structured field application. */
 bool osd_config_apply_file(const char *path, OSDArgs *args, FILE *err_stream) {
     char *json_text = NULL;
+    OSDArgs parsed_args;
     bool ok = true;
     static const char *const allowed_keys[] = {
         "watch_mode",
@@ -408,6 +409,7 @@ bool osd_config_apply_file(const char *path, OSDArgs *args, FILE *err_stream) {
     if (path == NULL || args == NULL || err_stream == NULL) {
         return false;
     }
+    parsed_args = *args;
 
     /* Fail early when file read fails; helper writes detailed error text. */
     if (!osd_config_read_file_text(path, &json_text, err_stream)) {
@@ -429,14 +431,18 @@ bool osd_config_apply_file(const char *path, OSDArgs *args, FILE *err_stream) {
         return false;
     }
 
-    ok &= osd_config_apply_numeric_values(json_text, args, err_stream);
-    ok &= osd_config_apply_monitor_index(json_text, args, err_stream);
-    ok &= osd_config_apply_bool_values(json_text, args, err_stream);
-    ok &= osd_config_apply_visual_values(json_text, args, err_stream);
-    if (ok && args->css_replace && !args->css_path_set) {
+    ok &= osd_config_apply_numeric_values(json_text, &parsed_args, err_stream);
+    ok &= osd_config_apply_monitor_index(json_text, &parsed_args, err_stream);
+    ok &= osd_config_apply_bool_values(json_text, &parsed_args, err_stream);
+    ok &= osd_config_apply_visual_values(json_text, &parsed_args, err_stream);
+    if (ok && parsed_args.css_replace && !parsed_args.css_path_set) {
         /* Replace mode without css_file would produce an unstyled window. */
         write_error_text(err_stream, "Config value 'css_replace' requires a non-empty 'css_file'\n");
         ok = false;
+    }
+
+    if (ok) {
+        *args = parsed_args;
     }
 
     free(json_text);
