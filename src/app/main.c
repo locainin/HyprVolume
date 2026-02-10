@@ -12,6 +12,11 @@ static bool osd_args_validate_combined(const OSDArgs *args, FILE *err_stream) {
         return false;
     }
 
+    if (args->watch_mode && !args->use_system_volume) {
+        (void)osd_io_write_line(err_stream, "--watch requires --from-system (watch mode always reads wpctl)");
+        return false;
+    }
+
     if (args->css_replace && !args->css_path_set) {
         (void)osd_io_write_line(err_stream, "--css-replace requires --css-file");
         return false;
