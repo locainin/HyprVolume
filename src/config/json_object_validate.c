@@ -1,7 +1,5 @@
 #include "config/json_config_fields.h"
 #include "config/json_token_scan_internal.h"
-
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,8 +38,7 @@ static void osd_config_write_error_key(FILE *err_stream, const char *prefix, con
  */
 bool osd_config_validate_json_envelope(const char *json_text, FILE *err_stream) {
     const char *cursor = NULL;
-    size_t text_len = 0U;
-    size_t trailing_index = 0U;
+    const char *root_end = NULL;
     int brace_depth = 0;
     int bracket_depth = 0;
     bool in_string = false;
@@ -94,6 +91,11 @@ bool osd_config_validate_json_envelope(const char *json_text, FILE *err_stream) 
                 osd_config_write_error_literal(err_stream, "Config file has unmatched '}'\n");
                 return false;
             }
+            if (brace_depth == 0 && bracket_depth == 0 && root_end == NULL) {
+                // Record the end of the first complete top-level object
+                // Remaining bytes must be whitespace only
+                root_end = cursor + 1;
+            }
             continue;
         }
         if (*cursor == ']') {
@@ -111,13 +113,13 @@ bool osd_config_validate_json_envelope(const char *json_text, FILE *err_stream) 
         return false;
     }
 
-    text_len = strlen(json_text);
-    trailing_index = text_len;
-    while (trailing_index > 0U && isspace((unsigned char)json_text[trailing_index - 1U]) != 0) {
-        trailing_index--;
+    if (root_end == NULL) {
+        osd_config_write_error_literal(err_stream, "Config file must be a JSON object\n");
+        return false;
     }
-    if (trailing_index == 0U || json_text[trailing_index - 1U] != '}') {
-        osd_config_write_error_literal(err_stream, "Config file must end with a JSON object\n");
+    cursor = osd_json_skip_whitespace(root_end);
+    if (cursor == NULL || *cursor != '\0') {
+        osd_config_write_error_literal(err_stream, "Config file must contain exactly one JSON object\n");
         return false;
     }
 
@@ -285,6 +287,21 @@ bool osd_config_validate_top_level_keys(
         osd_config_write_error_key(err_stream, "Config object key '", key_buffer, "' is followed by invalid separator\n");
         ok = false;
         break;
+    }
+
+    if (ok) {
+        // Envelope validation should already enforce this, but keep a local
+        // guard so this routine cannot silently ignore trailing payloads
+        if (cursor == NULL || *cursor != '}') {
+            osd_config_write_error_literal(err_stream, "Config file must end with a JSON object\n");
+            ok = false;
+        } else {
+            cursor = osd_json_skip_whitespace(cursor + 1);
+            if (cursor == NULL || *cursor != '\0') {
+                osd_config_write_error_literal(err_stream, "Config file must contain exactly one JSON object\n");
+                ok = false;
+            }
+        }
     }
 
     free(seen);
