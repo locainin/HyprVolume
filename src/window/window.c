@@ -20,14 +20,11 @@ static void window_log_watch_query_recovery(WindowState *state);
  * the popup is hidden, while preserving responsive active updates.
  */
 static unsigned int window_compute_idle_watch_poll_ms(unsigned int active_poll_ms) {
-    unsigned int idle_poll_ms = active_poll_ms;
+    unsigned int idle_poll_ms = OSD_MAX_IDLE_WATCH_POLL_MS;
 
     if (active_poll_ms <= (OSD_MAX_IDLE_WATCH_POLL_MS / 3U)) {
         /* Hidden polling is slower to reduce wakeups while preserving response. */
         idle_poll_ms = active_poll_ms * 3U;
-    } else {
-        /* Clamp larger values to a fixed upper idle latency target. */
-        idle_poll_ms = OSD_MAX_IDLE_WATCH_POLL_MS;
     }
 
     if (idle_poll_ms < OSD_MIN_IDLE_WATCH_POLL_MS) {
