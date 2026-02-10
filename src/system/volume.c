@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #define OSD_WPCTL_ENV_PATH "HYPRVOLUME_WPCTL_PATH"
+#define OSD_WPCTL_ENV_ALLOW_OVERRIDE "HYPRVOLUME_ALLOW_WPCTL_PATH_OVERRIDE"
 
 extern char **environ;
 
@@ -24,7 +25,7 @@ static bool is_regular_executable_file(const char *path) {
         return false;
     }
 
-    /* stat() validates object existence and type in one syscall. */
+    // stat follows symlinks and validates the target object type
     if (stat(path, &file_stat) != 0) {
         return false;
     }
@@ -38,10 +39,16 @@ static bool is_regular_executable_file(const char *path) {
     return access(path, X_OK) == 0;
 }
 
-/*
- * Resolves wpctl without PATH search to avoid executable hijacking.
- * Optional override is supported via HYPRVOLUME_WPCTL_PATH when absolute.
- */
+static bool is_env_flag_enabled(const char *value) {
+    return value != NULL && strcmp(value, "1") == 0;
+}
+
+static bool contains_newline_chars(const char *value) {
+    return value != NULL && (strchr(value, '\n') != NULL || strchr(value, '\r') != NULL);
+}
+
+// Resolves wpctl with fixed path rules and no PATH search
+// Optional override is used only when the explicit env gate is enabled
 static bool resolve_wpctl_path(char *out_path, size_t out_path_size, FILE *err_stream) {
     static bool has_cached_path = false;
     static char cached_path[256];
@@ -51,26 +58,30 @@ static bool resolve_wpctl_path(char *out_path, size_t out_path_size, FILE *err_s
         "/bin/wpctl"
     };
     const char *override_path = NULL;
+    const char *allow_override = NULL;
     size_t index = 0U;
 
     if (out_path == NULL || out_path_size == 0U || err_stream == NULL) {
         return false;
     }
 
-    if (has_cached_path) {
-        size_t cached_size = strlen(cached_path);
-
-        if (cached_size >= out_path_size) {
-            (void)fprintf(err_stream, "Resolved wpctl path is too long\n");
+    override_path = getenv(OSD_WPCTL_ENV_PATH);
+    allow_override = getenv(OSD_WPCTL_ENV_ALLOW_OVERRIDE);
+    // Env path is used only when the gate is set to exact value 1
+    if (is_env_flag_enabled(allow_override)) {
+        if (override_path == NULL || override_path[0] == '\0') {
+            (void)fprintf(
+                err_stream,
+                "%s=1 requires %s to be set to a non-empty absolute path\n",
+                OSD_WPCTL_ENV_ALLOW_OVERRIDE,
+                OSD_WPCTL_ENV_PATH
+            );
             return false;
         }
-        /* Fast path avoids repeated filesystem checks during watch polling. */
-        (void)strcpy(out_path, cached_path);
-        return true;
-    }
-
-    override_path = getenv(OSD_WPCTL_ENV_PATH);
-    if (override_path != NULL && override_path[0] != '\0') {
+        if (contains_newline_chars(override_path)) {
+            (void)fprintf(err_stream, "%s must not contain newline characters\n", OSD_WPCTL_ENV_PATH);
+            return false;
+        }
         /* Override path must be absolute to prevent PATH-based hijacks. */
         if (override_path[0] != '/') {
             (void)fprintf(err_stream, "%s must be an absolute path when set\n", OSD_WPCTL_ENV_PATH);
@@ -86,14 +97,30 @@ static bool resolve_wpctl_path(char *out_path, size_t out_path_size, FILE *err_s
         }
         /* Copy is safe because output buffer size was checked. */
         (void)strcpy(out_path, override_path);
-        if (strlen(override_path) < sizeof(cached_path)) {
-            (void)strcpy(cached_path, override_path);
-            has_cached_path = true;
-        }
         return true;
     }
 
+    // Cache is used only for trusted fixed paths
+    if (has_cached_path) {
+        if (!is_regular_executable_file(cached_path)) {
+            // Cache is cleared when executable disappears or becomes invalid
+            has_cached_path = false;
+            cached_path[0] = '\0';
+        } else {
+            size_t cached_size = strlen(cached_path);
+
+            if (cached_size >= out_path_size) {
+                (void)fprintf(err_stream, "Resolved wpctl path is too long\n");
+                return false;
+            }
+            // Fast path avoids repeated file checks during watch polling
+            (void)strcpy(out_path, cached_path);
+            return true;
+        }
+    }
+
     for (index = 0U; index < (sizeof(default_paths) / sizeof(default_paths[0])); index++) {
+        // Check fixed trusted paths in stable order
         /* Iterate deterministic trusted paths in fixed priority order. */
         if (!is_regular_executable_file(default_paths[index])) {
             continue;
@@ -110,7 +137,12 @@ static bool resolve_wpctl_path(char *out_path, size_t out_path_size, FILE *err_s
         return true;
     }
 
-    (void)fprintf(err_stream, "Failed to locate wpctl in standard paths; set %s to an absolute executable path\n", OSD_WPCTL_ENV_PATH);
+    (void)fprintf(
+        err_stream,
+        "Failed to locate wpctl in standard paths; set %s to an absolute executable path and %s=1 to opt in\n",
+        OSD_WPCTL_ENV_PATH,
+        OSD_WPCTL_ENV_ALLOW_OVERRIDE
+    );
     return false;
 }
 
@@ -247,6 +279,7 @@ static bool read_wpctl_volume_line(char *line, size_t line_size, FILE *err_strea
     char wpctl_path[256];
     size_t line_used = 0U;
     int status = 0;
+    bool line_truncated = false;
     posix_spawn_file_actions_t spawn_actions;
     int spawn_result = 0;
     char *const wpctl_argv[] = {"wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@", NULL};
@@ -255,6 +288,7 @@ static bool read_wpctl_volume_line(char *line, size_t line_size, FILE *err_strea
         return false;
     }
 
+    // sizeof(wpctl_path) is used so buffer and size stay linked
     if (!resolve_wpctl_path(wpctl_path, sizeof(wpctl_path), err_stream)) {
         /* Path resolution errors are already emitted by helper. */
         return false;
@@ -290,7 +324,7 @@ static bool read_wpctl_volume_line(char *line, size_t line_size, FILE *err_strea
     spawn_result = posix_spawn(&child_pid, wpctl_path, &spawn_actions, NULL, wpctl_argv, environ);
     (void)posix_spawn_file_actions_destroy(&spawn_actions);
     if (spawn_result != 0) {
-        (void)fprintf(err_stream, "Failed to spawn wpctl process\n");
+        (void)fprintf(err_stream, "Failed to spawn wpctl process: %s\n", strerror(spawn_result));
         (void)close(pipe_fds[0]);
         (void)close(pipe_fds[1]);
         return false;
@@ -298,6 +332,7 @@ static bool read_wpctl_volume_line(char *line, size_t line_size, FILE *err_strea
 
     (void)close(pipe_fds[1]);
     line[0] = '\0';
+    // Read only the first line from wpctl output
     while (line_used < (line_size - 1U)) {
         ssize_t bytes_read = read(pipe_fds[0], line + line_used, line_size - 1U - line_used);
         size_t offset = 0U;
@@ -320,6 +355,7 @@ static bool read_wpctl_volume_line(char *line, size_t line_size, FILE *err_strea
 
         while (offset < (size_t)bytes_read) {
             if (line[line_used + offset] == '\n') {
+                // One line is enough for current parser format
                 /* First line is sufficient for wpctl get-volume output. */
                 line_used += offset + 1U;
                 goto read_complete;
@@ -329,12 +365,20 @@ static bool read_wpctl_volume_line(char *line, size_t line_size, FILE *err_strea
 
         line_used += (size_t)bytes_read;
     }
+    if (line_used == (line_size - 1U)) {
+        line_truncated = true;
+    }
 
 read_complete:
+    // Keep writes inside the line buffer
+    if (line_used >= line_size) {
+        line_used = line_size - 1U;
+        line_truncated = true;
+    }
     /* Ensure parser always receives a terminated C string. */
     line[line_used] = '\0';
     (void)close(pipe_fds[0]);
-    if (line_used == 0U) {
+    if (line_truncated || line_used == 0U) {
         if (!wait_for_child_process(child_pid, &status, err_stream)) {
             return false;
         }
@@ -344,6 +388,10 @@ read_complete:
         }
         if (!WIFEXITED(status)) {
             (void)fprintf(err_stream, "wpctl get-volume terminated unexpectedly\n");
+            return false;
+        }
+        if (line_truncated) {
+            (void)fprintf(err_stream, "wpctl output exceeds internal line buffer\n");
             return false;
         }
         (void)fprintf(err_stream, "wpctl get-volume produced no stdout output\n");
