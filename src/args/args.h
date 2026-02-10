@@ -62,7 +62,12 @@ typedef struct {
 } OSDArgs;
 
 void osd_args_defaults(OSDArgs *args);
+
+// Parses CLI flags into out
+// Returns false when input is invalid
 bool osd_args_parse(int argc, char **argv, OSDArgs *out, FILE *err_stream);
+
+// Prints CLI help text
 void osd_args_print_help(FILE *out_stream, const char *program_name);
 
 #endif
