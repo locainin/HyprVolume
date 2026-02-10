@@ -1,4 +1,5 @@
 #include "parse_internal.h"
+#include "common/safeio.h"
 
 #include <limits.h>
 #include <string.h>
@@ -127,7 +128,8 @@ bool osd_args_parse(int argc, char **argv, OSDArgs *out, FILE *err_stream) {
             continue;
         }
 
-        (void)fprintf(err_stream, "Unknown option: %s\n", arg);
+        (void)osd_io_write_text(err_stream, "Unknown option: ");
+        (void)osd_io_write_line(err_stream, arg);
         return false;
     }
 

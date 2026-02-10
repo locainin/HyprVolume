@@ -1,4 +1,5 @@
 #include "args/args.h"
+#include "common/safeio.h"
 
 /* Prints command usage and all supported runtime options. */
 void osd_args_print_help(FILE *out_stream, const char *program_name) {
@@ -8,9 +9,11 @@ void osd_args_print_help(FILE *out_stream, const char *program_name) {
         return;
     }
 
-    (void)fprintf(
+    (void)osd_io_write_text(out_stream, "Usage: ");
+    (void)osd_io_write_text(out_stream, name);
+    (void)osd_io_write_line(out_stream, " [options]");
+    (void)osd_io_write_text(
         out_stream,
-        "Usage: %s [options]\n"
         "\n"
         "Volume source options:\n"
         "  --from-system          Read current sink volume from wpctl (default).\n"
@@ -47,7 +50,6 @@ void osd_args_print_help(FILE *out_stream, const char *program_name) {
         "  --icon-color <css-color>\n"
         "\n"
         "General:\n"
-        "  --help                 Show this help text.\n",
-        name
+        "  --help                 Show this help text.\n"
     );
 }
