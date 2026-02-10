@@ -1,8 +1,12 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "system/volume.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
+#include <poll.h>
+#include <signal.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +17,8 @@
 
 #define OSD_WPCTL_ENV_PATH "HYPRVOLUME_WPCTL_PATH"
 #define OSD_WPCTL_ENV_ALLOW_OVERRIDE "HYPRVOLUME_ALLOW_WPCTL_PATH_OVERRIDE"
+#define OSD_WPCTL_IO_TIMEOUT_MS 1500
+#define OSD_WPCTL_WAIT_POLL_MS 25
 
 extern char **environ;
 
@@ -190,6 +196,49 @@ static bool wait_for_child_process(pid_t child_pid, int *status, FILE *err_strea
     return true;
 }
 
+// Waits for child exit with a deadline then force kills on timeout
+static bool wait_for_child_process_with_timeout(
+    pid_t child_pid,
+    int *status,
+    unsigned int timeout_ms,
+    FILE *err_stream
+) {
+    unsigned int waited_ms = 0U;
+
+    if (status == NULL || err_stream == NULL) {
+        return false;
+    }
+
+    while (waited_ms <= timeout_ms) {
+        pid_t wait_result = waitpid(child_pid, status, WNOHANG);
+
+        if (wait_result == child_pid) {
+            return true;
+        }
+        if (wait_result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            (void)fprintf(err_stream, "Failed to wait for wpctl process\n");
+            return false;
+        }
+
+        if (waited_ms == timeout_ms) {
+            break;
+        }
+
+        (void)poll(NULL, 0, OSD_WPCTL_WAIT_POLL_MS);
+        waited_ms += OSD_WPCTL_WAIT_POLL_MS;
+    }
+
+    (void)kill(child_pid, SIGKILL);
+    if (!wait_for_child_process(child_pid, status, err_stream)) {
+        return false;
+    }
+    (void)fprintf(err_stream, "wpctl get-volume timed out\n");
+    return false;
+}
+
 /*
  * Parses wpctl output while tolerating known output variants:
  * - "Volume: <fraction> [MUTED]"
@@ -334,16 +383,46 @@ static bool read_wpctl_volume_line(char *line, size_t line_size, FILE *err_strea
     line[0] = '\0';
     // Read only the first line from wpctl output
     while (line_used < (line_size - 1U)) {
-        ssize_t bytes_read = read(pipe_fds[0], line + line_used, line_size - 1U - line_used);
+        struct pollfd poll_fd;
+        int poll_result = 0;
+        ssize_t bytes_read = 0;
         size_t offset = 0U;
 
+        poll_fd.fd = pipe_fds[0];
+        poll_fd.events = POLLIN | POLLHUP;
+        poll_fd.revents = 0;
+
+        do {
+            poll_result = poll(&poll_fd, 1, OSD_WPCTL_IO_TIMEOUT_MS);
+        } while (poll_result < 0 && errno == EINTR);
+
+        if (poll_result < 0) {
+            (void)close(pipe_fds[0]);
+            (void)wait_for_child_process_with_timeout(child_pid, &status, OSD_WPCTL_IO_TIMEOUT_MS, err_stream);
+            (void)fprintf(err_stream, "Failed to poll wpctl output pipe\n");
+            return false;
+        }
+        if (poll_result == 0) {
+            (void)close(pipe_fds[0]);
+            (void)wait_for_child_process_with_timeout(child_pid, &status, OSD_WPCTL_IO_TIMEOUT_MS, err_stream);
+            (void)fprintf(err_stream, "Timed out while reading wpctl output\n");
+            return false;
+        }
+        if ((poll_fd.revents & (POLLERR | POLLNVAL)) != 0) {
+            (void)close(pipe_fds[0]);
+            (void)wait_for_child_process_with_timeout(child_pid, &status, OSD_WPCTL_IO_TIMEOUT_MS, err_stream);
+            (void)fprintf(err_stream, "Invalid state while reading wpctl output\n");
+            return false;
+        }
+
+        bytes_read = read(pipe_fds[0], line + line_used, line_size - 1U - line_used);
         if (bytes_read < 0) {
             if (errno == EINTR) {
                 /* Retry interrupted reads without dropping stream state. */
                 continue;
             }
             (void)close(pipe_fds[0]);
-            (void)wait_for_child_process(child_pid, &status, err_stream);
+            (void)wait_for_child_process_with_timeout(child_pid, &status, OSD_WPCTL_IO_TIMEOUT_MS, err_stream);
             (void)fprintf(err_stream, "Failed to read volume from wpctl output\n");
             return false;
         }
@@ -379,7 +458,7 @@ read_complete:
     line[line_used] = '\0';
     (void)close(pipe_fds[0]);
     if (line_truncated || line_used == 0U) {
-        if (!wait_for_child_process(child_pid, &status, err_stream)) {
+        if (!wait_for_child_process_with_timeout(child_pid, &status, OSD_WPCTL_IO_TIMEOUT_MS, err_stream)) {
             return false;
         }
         if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
@@ -398,7 +477,7 @@ read_complete:
         return false;
     }
 
-    if (!wait_for_child_process(child_pid, &status, err_stream)) {
+    if (!wait_for_child_process_with_timeout(child_pid, &status, OSD_WPCTL_IO_TIMEOUT_MS, err_stream)) {
         /* wait helper already emitted the failure message. */
         return false;
     }
