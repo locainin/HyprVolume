@@ -1,4 +1,5 @@
 #include "args/args.h"
+#include "common/safeio.h"
 #include "config/config.h"
 #include "window/window.h"
 
@@ -12,7 +13,7 @@ static bool osd_args_validate_combined(const OSDArgs *args, FILE *err_stream) {
     }
 
     if (args->css_replace && !args->css_path_set) {
-        (void)fprintf(err_stream, "--css-replace requires --css-file\n");
+        (void)osd_io_write_line(err_stream, "--css-replace requires --css-file");
         return false;
     }
 
