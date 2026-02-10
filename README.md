@@ -92,6 +92,7 @@ Watch-mode performance behavior:
 - while the popup is visible, polling uses `watch_poll_ms`
 - while hidden, polling automatically backs off to a slower idle interval to reduce CPU load
 - transient `wpctl` query failures are retried in-place so the watcher stays alive instead of exiting
+- watch mode always reads system volume from `wpctl` (manual `--value/--muted` applies to one-shot mode only)
 
 One-shot mode:
 
@@ -112,6 +113,11 @@ Load config explicitly:
 ```
 
 CLI options override config values.
+
+For text/path options when the value starts with `-`, use either:
+
+- `--option=-value`
+- `--option -- -value`
 
 Config validation is strict:
 
@@ -136,6 +142,18 @@ Custom CSS requirements:
 
 - file must be a regular UTF-8 text file
 - GTK CSS parsing errors are reported and style load is rejected
+- file must be no larger than 256 KiB
+
+Config file requirements:
+
+- file must be no larger than 1 MiB
+
+### Advanced troubleshooting
+
+If `wpctl` is not in the trusted locations, an explicit override is supported:
+
+- set `HYPRVOLUME_ALLOW_WPCTL_PATH_OVERRIDE=1`
+- set `HYPRVOLUME_WPCTL_PATH` to an absolute executable path
 
 ### Positioning
 
@@ -157,6 +175,10 @@ Anchor placement is also supported:
 
 - `anchor`: `top-center`, `top-left`, `top-right`, `bottom-center`, `bottom-left`, `bottom-right`
 - `margin_x`, `margin_y`
+
+CLI margin note:
+
+- `--margin-top` maps to config `margin_y`
 
 ### Supported keys
 

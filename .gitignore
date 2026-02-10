@@ -4,4 +4,5 @@ build-san/
 compile_commands.json
 .cache/
 tests/
+/scripts/Tests/
 .clangd
