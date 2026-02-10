@@ -1,6 +1,6 @@
 #include "args/args.h"
 
-#include <string.h>
+#include <stddef.h>
 
 #define OSD_DEFAULT_VOLUME_PERCENT 50
 #define OSD_DEFAULT_TIMEOUT_MS 1400U
@@ -13,6 +13,16 @@
 #define OSD_DEFAULT_CORNER_RADIUS_PX 10U
 #define OSD_DEFAULT_ICON_SIZE_PX 14U
 #define OSD_DEFAULT_FONT_SIZE_PX 14U
+#define OSD_COPY_LITERAL(dst, literal)                         \
+    do {                                                       \
+        static const char osd_literal_value[] = literal;       \
+        size_t osd_literal_index = 0U;                         \
+        _Static_assert(sizeof(osd_literal_value) <= sizeof(dst), "literal exceeds destination buffer"); \
+        while (osd_literal_index < sizeof(osd_literal_value)) { \
+            (dst)[osd_literal_index] = osd_literal_value[osd_literal_index]; \
+            osd_literal_index++;                               \
+        }                                                      \
+    } while (0)
 
 /* Initializes all runtime arguments to production-safe defaults. */
 void osd_args_defaults(OSDArgs *args) {
@@ -50,10 +60,10 @@ void osd_args_defaults(OSDArgs *args) {
      * Default palette:
      * dark glass panel with blue accents and bright text.
      */
-    (void)strcpy(args->theme.background_color, "linear-gradient(140deg, rgba(16, 23, 36, 0.95), rgba(20, 30, 46, 0.93))");
-    (void)strcpy(args->theme.border_color, "rgba(102, 131, 182, 0.42)");
-    (void)strcpy(args->theme.fill_color, "linear-gradient(90deg, #8fd9ff 0%, #72c4ff 52%, #5aa7ff 100%)");
-    (void)strcpy(args->theme.track_color, "linear-gradient(90deg, rgba(33, 45, 69, 0.76), rgba(30, 40, 60, 0.74))");
-    (void)strcpy(args->theme.text_color, "#e8f2ff");
-    (void)strcpy(args->theme.icon_color, "#ffffff");
+    OSD_COPY_LITERAL(args->theme.background_color, "linear-gradient(140deg, rgba(16, 23, 36, 0.95), rgba(20, 30, 46, 0.93))");
+    OSD_COPY_LITERAL(args->theme.border_color, "rgba(102, 131, 182, 0.42)");
+    OSD_COPY_LITERAL(args->theme.fill_color, "linear-gradient(90deg, #8fd9ff 0%, #72c4ff 52%, #5aa7ff 100%)");
+    OSD_COPY_LITERAL(args->theme.track_color, "linear-gradient(90deg, rgba(33, 45, 69, 0.76), rgba(30, 40, 60, 0.74))");
+    OSD_COPY_LITERAL(args->theme.text_color, "#e8f2ff");
+    OSD_COPY_LITERAL(args->theme.icon_color, "#ffffff");
 }
