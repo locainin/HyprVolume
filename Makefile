@@ -15,7 +15,10 @@ CONFIG_DIR ?= $(HOME)/.config/hyprvolume
 WARN_AS_ERR ?= 0
 
 SRCS := $(shell find $(SRC_DIR) -type f -name '*.c' | sort)
-PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PKGS))
+PKG_CFLAGS_RAW := $(shell $(PKG_CONFIG) --cflags $(PKGS))
+# External dependency headers are treated as system includes so strict clang
+# profiles do not fail on third-party header diagnostics
+PKG_CFLAGS := $(patsubst -I%,-isystem %,$(PKG_CFLAGS_RAW))
 PKG_LIBS := $(shell $(PKG_CONFIG) --libs $(PKGS))
 
 # Compiler flag profiles:

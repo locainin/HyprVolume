@@ -1,7 +1,6 @@
 #include "window/window.h"
 
 #include "internal.h"
-#include <string.h>
 
 #define OSD_MIN_IDLE_WATCH_POLL_MS 250U
 #define OSD_MAX_IDLE_WATCH_POLL_MS 1000U
@@ -135,7 +134,7 @@ static void window_on_activate(GtkApplication *app, gpointer user_data) {
 // Main GUI entrypoint used by app main after args parse
 int osd_window_run(const OSDArgs *args) {
     GtkApplication *app = NULL;
-    WindowState state;
+    WindowState state = {0};
     int status = 1;
 
     if (args == NULL) {
@@ -143,7 +142,6 @@ int osd_window_run(const OSDArgs *args) {
         return 1;
     }
 
-    (void)memset(&state, 0, sizeof(state));
     // Zero init keeps cleanup paths and flags predictable
     state.args = *args;
     state.current_volume = args->volume;
