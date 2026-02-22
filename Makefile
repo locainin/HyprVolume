@@ -25,7 +25,7 @@ PKG_LIBS := $(shell $(PKG_CONFIG) --libs $(PKGS))
 # - default `make`: optimized release-oriented build
 # - `make strict`: warning-heavy diagnostics and warnings-as-errors
 # - `make test`: sanitizer-focused runtime checks
-CFLAGS_BASE ?= -std=c11 -Wall -Wextra
+CFLAGS_BASE ?= -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra
 CFLAGS_RELEASE ?= -O3 -march=native -flto -DNDEBUG
 CFLAGS_STRICT ?= -O2 -g -fno-omit-frame-pointer -Wformat=2 -Wconversion -Wshadow -Wpedantic
 CFLAGS_TEST ?= -O2 -g -fno-omit-frame-pointer -fsanitize=address,undefined,leak -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fno-sanitize-recover=all -Wformat=2 -Wconversion -Wshadow -Wpedantic

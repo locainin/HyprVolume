@@ -1,9 +1,9 @@
-#include "parse_internal.h"
+#include "args/parse/parse_internal.h"
 
 #include "common/safeio.h"
-#include "parse_option.h"
-#include "parse_text.h"
-#include "parse_value.h"
+#include "args/parse/parse_option.h"
+#include "args/parse/parse_text.h"
+#include "args/parse/parse_value.h"
 
 #include <string.h>
 

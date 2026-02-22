@@ -19,6 +19,7 @@ read -r -a pkg_cflags <<<"$(pkg-config --cflags gtk4 gtk4-layer-shell-0)"
 
 common_flags=(
   -D_FORTIFY_SOURCE=3
+  -D_POSIX_C_SOURCE=200809L
   -Isrc
   -std=c11
   -O2

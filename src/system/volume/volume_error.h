@@ -1,9 +1,9 @@
 #ifndef HYPRVOLUME_SYSTEM_VOLUME_ERROR_H
 #define HYPRVOLUME_SYSTEM_VOLUME_ERROR_H
 
-#include "system/volume_parse.h"
-#include "system/volume_path.h"
-#include "system/volume_proc.h"
+#include "system/volume/volume_parse.h"
+#include "system/volume/volume_path.h"
+#include "system/volume/volume_proc.h"
 
 #include <stdio.h>
 

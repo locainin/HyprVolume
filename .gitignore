@@ -6,3 +6,4 @@ compile_commands.json
 tests/
 /scripts/Tests/
 .clangd
+.clang-tidy.local

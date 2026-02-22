@@ -1,7 +1,7 @@
-#include "parse_option.h"
+#include "args/parse/parse_option.h"
 
 #include "common/safeio.h"
-#include "parse_value.h"
+#include "args/parse/parse_value.h"
 
 #include <string.h>
 
@@ -24,10 +24,8 @@ static bool policy_rejects_next_token(OSDOptionValuePolicy policy, const char *c
     }
 
     switch (policy) {
-    // Text options treat option-looking tokens as missing values
+    // Text options and unsigned numbers both reject option-looking tokens
     case OSD_VALUE_POLICY_TEXT_STRICT:
-        return true;
-    // Unsigned options reject token-looking values to block -1 ambiguity
     case OSD_VALUE_POLICY_NUMERIC_UNSIGNED:
         return true;
     // Signed options allow -N but still reject true option names

@@ -1,7 +1,7 @@
 #ifndef HYPRVOLUME_SYSTEM_VOLUME_ERROR_INTERNAL_H
 #define HYPRVOLUME_SYSTEM_VOLUME_ERROR_INTERNAL_H
 
-#include "system/volume_path.h"
+#include "system/volume/volume_path.h"
 #include <stddef.h>
 #include <stdio.h>
 

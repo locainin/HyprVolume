@@ -1,6 +1,6 @@
 #include "system/volume.h"
-#include "system/volume_error.h"
-#include "system/volume_path.h"
+#include "system/volume/volume_error.h"
+#include "system/volume/volume_path.h"
 
 #define OSD_VOLUME_WPCTL_PATH_MAX 256U
 #define OSD_VOLUME_WPCTL_LINE_MAX 256U
